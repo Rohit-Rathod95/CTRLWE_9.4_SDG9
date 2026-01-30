@@ -262,7 +262,7 @@ if 'ai_service' not in st.session_state:
 st.sidebar.markdown("### 🎛️ Navigation")
 page = st.sidebar.radio(
     "Select Module",
-    ["🏠 Operations Dashboard", "📥 Data Integration", "📊 Fleet Analytics", "🤖 AI Intelligence Hub", "📄 Reports & Insights"],
+    ["🏠 Operations Dashboard", "📥 Data Integration", "📊 Fleet Analytics", "🤖 AI Intelligence Hub"],
     label_visibility="collapsed"
 )
 
@@ -1134,9 +1134,9 @@ The asset is currently operating at {efficiency:.1f}% efficiency with {'elevated
         # Display generated report if available
         if 'generated_report' in st.session_state:
             st.markdown("<br>", unsafe_allow_html=True)
-            st.markdown("---")
-            st.markdown(st.session_state.generated_report)
-
+            st.markdown("---") 
+            display_report = st.session_state.generated_report.replace('<b>', '**').replace('</b>', '**')  #st.markdown(st.session_state.generated_report)
+            st.markdown(display_report)   #st.markdown(st.session_state.generated_report
     else:
         # Before analysis is generated
         st.markdown("""
@@ -1151,73 +1151,5 @@ The asset is currently operating at {efficiency:.1f}% efficiency with {'elevated
             </p>
         </div>
         """, unsafe_allow_html=True)
-# ================= REPORTS =================
-elif page == "📄 Reports & Insights":
-    st.markdown("### 📋 Automated Maintenance Reporting")
     
-    # Check if predictions are available
-    if st.session_state.predictions is None:
-        st.warning("⚠️ No prediction data available. Please upload and process data in the Data Integration page first.")
-        st.stop()
     
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        machine_options = []
-        if st.session_state.uploaded_data is not None and 'machine_id' in st.session_state.uploaded_data.columns:
-            machine_options = st.session_state.uploaded_data['machine_id'].tolist()
-        else:
-            machine_options = [f"Asset {i+1}" for i in range(len(st.session_state.predictions))]
-        
-        st.selectbox(
-            "Select Asset",
-            machine_options,
-            help="Choose an asset to generate maintenance report"
-        )
-        
-        st.selectbox(
-            "Report Format",
-            ["PDF Document", "HTML Web Page", "JSON Data Export", "Excel Spreadsheet"],
-            help="Select output format for the report"
-        )
-        
-        st.date_input("Report Period Start")
-        st.date_input("Report Period End")
-    
-    with col2:
-        st.markdown("""
-        <div style="background: rgba(74, 158, 255, 0.05); padding: 1.5rem; border-radius: 8px; border: 1px solid #2d4a5f; height: 100%;">
-            <p style="font-size: 0.75rem; color: #4a9eff; margin: 0 0 1rem 0; font-weight: 600;">📑 REPORT INCLUDES</p>
-            <p style="font-size: 0.8rem; color: #b8c5d6; line-height: 1.6; margin: 0;">
-                • Operational performance metrics<br>
-                • Maintenance recommendations<br>
-                • Historical trend analysis<br>
-                • Cost-benefit projections<br>
-                • Compliance documentation
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    st.markdown("<br>", unsafe_allow_html=True)
-    
-    st.button("📥 Generate Report", disabled=True, use_container_width=False, help="Feature coming soon")
-    
-    st.markdown("<br>", unsafe_allow_html=True)
-    
-    st.markdown("### 📄 Report Preview")
-    
-    st.text_area(
-        "Generated report will appear here",
-        value="═══════════════════════════════════════════\n"
-              "   MAINTENANCE INTELLIGENCE REPORT\n"
-              "═══════════════════════════════════════════\n\n"
-              "Report generation feature coming soon.\n\n"
-              "Once available, this section will display:\n"
-              "• Executive summary\n"
-              "• Detailed analytics\n"
-              "• Actionable insights\n"
-              "• Maintenance schedules\n\n"
-              "═══════════════════════════════════════════",
-        height=300,
-        disabled=True
-    )
