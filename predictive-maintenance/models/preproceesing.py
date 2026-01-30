@@ -14,7 +14,7 @@ print("="*80)
 # 1. LOAD DATA
 # =========================
 print("\n[1/8] Loading data...")
-df = pd.read_csv('../data/merged_dataset.csv')
+df = pd.read_csv('../data/merged_one.csv')
 print(f"✅ Original shape: {df.shape}")
 print(f"   Columns: {df.shape[1]}")
 print(f"   Rows: {df.shape[0]}")

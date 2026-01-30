@@ -375,7 +375,7 @@ print(f"     {targets}")
 print("\nKey Features:")
 print("  ✅ Uses only 8 specified input features")
 print("  ✅ Predicts 4 health/risk indicators")
-print("  ✅ Ensemble of 4 different models")
+print("  ✅ Ensemble of 4 different models") 
 print("  ✅ Optimized hyperparameters")
 print("  ✅ Weighted averaging based on performance")
 

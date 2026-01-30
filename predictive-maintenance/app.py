@@ -3,9 +3,18 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import time
-
+from dotenv import load_dotenv
+load_dotenv()
 # Import ML inference
 from models.inference import predict_from_dataframe
+
+# Import analytics utilities (from services folder)
+from services.analytics import (
+    enrich_predictions_with_analytics,
+    calculate_fleet_statistics,
+    get_machine_analytics
+)
+from services.gemini_ai import get_ai_service
 
 # ================= PAGE CONFIG =================
 st.set_page_config(
@@ -227,6 +236,10 @@ if 'uploaded_data' not in st.session_state:
 if 'last_health_update' not in st.session_state:
     st.session_state.last_health_update = pd.Timestamp.now()
 
+# Initialize AI service (cached)
+if 'ai_service' not in st.session_state:
+    st.session_state.ai_service = get_ai_service()
+
 # ================= SIDEBAR =================
 st.sidebar.markdown("### 🎛️ Navigation")
 page = st.sidebar.radio(
@@ -252,7 +265,7 @@ st.sidebar.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# ================= DASHBOARD =================
+# ================= OPERATIONS DASHBOARD =================
 if page == "🏠 Operations Dashboard":
     st.markdown("### 📈 Factory Operations Overview")
     
@@ -261,12 +274,11 @@ if page == "🏠 Operations Dashboard":
         predictions = st.session_state.predictions
         uploaded_data = st.session_state.uploaded_data
         
-        total_assets = len(predictions)
+        # Enrich predictions with advanced analytics
+        enriched_predictions = enrich_predictions_with_analytics(predictions)
+        fleet_stats = calculate_fleet_statistics(predictions)
         
-        # Classify assets by efficiency
-        operational = len(predictions[predictions['efficiency_index'] >= 70])
-        attention = len(predictions[(predictions['efficiency_index'] >= 40) & (predictions['efficiency_index'] < 70)])
-        critical = len(predictions[predictions['efficiency_index'] < 40])
+        total_assets = fleet_stats['total_assets']
         
         col1, col2, col3, col4 = st.columns(4)
         
@@ -278,48 +290,57 @@ if page == "🏠 Operations Dashboard":
             )
         
         with col2:
-            operational_pct = (operational / total_assets * 100) if total_assets > 0 else 0
+            avg_health = fleet_stats['avg_health_score']
             st.metric(
-                label="Operational",
-                value=operational,
-                delta=f"{operational_pct:.1f}%"
+                label="Avg Health Score",
+                value=f"{avg_health:.1f}",
+                delta=f"{avg_health - 75:.1f}" if avg_health < 75 else f"+{avg_health - 75:.1f}"
             )
         
         with col3:
+            critical = fleet_stats['critical_count']
+            high_risk = fleet_stats['high_risk_count']
             st.metric(
-                label="Attention Required",
-                value=attention,
-                delta=f"{attention}" if attention > 0 else "0"
+                label="High Priority Assets",
+                value=critical + high_risk,
+                delta=f"{critical} Critical" if critical > 0 else "0 Critical"
             )
         
         with col4:
+            low_risk = fleet_stats['low_risk_count']
+            operational_pct = (low_risk / total_assets * 100) if total_assets > 0 else 0
             st.metric(
-                label="Critical Alerts",
-                value=critical,
-                delta=f"{critical}" if critical > 0 else "0"
+                label="Operational Status",
+                value=f"{operational_pct:.0f}%",
+                delta=f"{low_risk} assets"
             )
         
         st.markdown("---")
         
-        # Display asset summary table
+        # Display asset summary table with enriched data
         st.markdown("### 🎯 Asset Health Summary")
         
-        # Merge uploaded data with predictions
+        # Merge uploaded data with enriched predictions
         summary_df = uploaded_data.copy()
-        summary_df['Efficiency Index'] = predictions['efficiency_index'].values
-        summary_df['Vibration Index'] = predictions['vibration_index'].values
-        summary_df['Thermal Index'] = predictions['thermal_index'].values
+        summary_df['Health Score'] = enriched_predictions['health_score'].values
+        summary_df['Risk Level'] = enriched_predictions['risk_level'].values
+        summary_df['Dominant Issue'] = enriched_predictions['dominant_issue'].values
+        summary_df['Efficiency Index'] = enriched_predictions['efficiency_index'].values
+        summary_df['Vibration Index'] = enriched_predictions['vibration_index'].values
+        summary_df['Thermal Index'] = enriched_predictions['thermal_index'].values
         
-        # Add status classification
-        def classify_status(efficiency):
-            if efficiency >= 70:
-                return "🟢 Operational"
-            elif efficiency >= 40:
-                return "🟡 Attention"
+        # Add visual status
+        def risk_to_emoji(risk):
+            if risk == "Low":
+                return "🟢 Low"
+            elif risk == "Medium":
+                return "🟡 Medium"
+            elif risk == "High":
+                return "🟠 High"
             else:
                 return "🔴 Critical"
         
-        summary_df['Status'] = summary_df['Efficiency Index'].apply(classify_status)
+        summary_df['Status'] = summary_df['Risk Level'].apply(risk_to_emoji)
         
         # Display key columns
         display_cols = []
@@ -327,13 +348,12 @@ if page == "🏠 Operations Dashboard":
             display_cols.append('machine_id')
         if 'machine_type' in summary_df.columns:
             display_cols.append('machine_type')
-        display_cols.extend(['Status', 'Efficiency Index', 'Vibration Index', 'Thermal Index'])
+        display_cols.extend(['Status', 'Health Score', 'Dominant Issue', 'Efficiency Index'])
         
         st.dataframe(
             summary_df[display_cols].style.format({
-                'Efficiency Index': '{:.1f}',
-                'Vibration Index': '{:.1f}',
-                'Thermal Index': '{:.1f}'
+                'Health Score': '{:.1f}',
+                'Efficiency Index': '{:.1f}'
             }),
             use_container_width=True,
             height=400
@@ -343,40 +363,21 @@ if page == "🏠 Operations Dashboard":
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            st.metric(
-                label="Total Assets",
-                value="—",
-                delta="Awaiting data"
-            )
-        
+            st.metric(label="Total Assets", value="—", delta="Awaiting data")
         with col2:
-            st.metric(
-                label="Operational",
-                value="—",
-                delta="0%"
-            )
-        
+            st.metric(label="Avg Health Score", value="—", delta="0")
         with col3:
-            st.metric(
-                label="Attention Required",
-                value="—",
-                delta="0"
-            )
-        
+            st.metric(label="High Priority Assets", value="—", delta="0")
         with col4:
-            st.metric(
-                label="Critical Alerts",
-                value="—",
-                delta="0"
-            )
+            st.metric(label="Operational Status", value="—", delta="0%")
         
         st.markdown("---")
         
         st.markdown("""
         <div style="padding: 2rem; background: rgba(74, 158, 255, 0.05); border-radius: 8px; border: 1px solid #2d4a5f; text-align: center;">
             <p style="color: #7a92a8; font-size: 0.95rem;">
-                ⚙️ Machine health monitoring will be displayed here once the prediction engine is integrated.<br>
-                <span style="font-size: 0.85rem;">Connect your ML model to begin real-time asset tracking.</span>
+                ⚙️ Machine health monitoring will be displayed here once data is uploaded and processed.<br>
+                <span style="font-size: 0.85rem;">Navigate to Data Integration to begin.</span>
             </p>
         </div>
         """, unsafe_allow_html=True)
@@ -484,34 +485,29 @@ elif page == "📥 Data Integration":
         st.markdown("<br>", unsafe_allow_html=True)
         st.button("🚀 Process Data", disabled=True, use_container_width=False, help="Please upload a CSV file first")
 
-# ================= FLEET OVERVIEW =================
+# ================= FLEET ANALYTICS =================
 elif page == "📊 Fleet Analytics":
     st.markdown("### 🔧 Comprehensive Fleet Health Analytics")
 
-    # Check if predictions are available
     if st.session_state.predictions is None:
         st.warning("⚠️ No prediction data available. Please upload and process data in the Data Integration page first.")
         st.stop()
     
     predictions = st.session_state.predictions
+    enriched_predictions = enrich_predictions_with_analytics(predictions)
+    fleet_stats = calculate_fleet_statistics(predictions)
     
     # Calculate time since last update
     time_since_update = (pd.Timestamp.now() - st.session_state.last_health_update).total_seconds()
-    
-    # Calculate time until next update (5 minutes = 300 seconds)
     time_until_next = max(0, 300 - time_since_update)
     minutes_left = int(time_until_next // 60)
     seconds_left = int(time_until_next % 60)
     
     # Use real ML predictions
-    vibration_index = predictions['vibration_index'].mean()
-    thermal_index = predictions['thermal_index'].mean()
-    efficiency_index = predictions['efficiency_index'].mean()
-    
-    # Calculate deltas (comparing to baseline of 50 for indices, inverted logic)
-    vibration_delta = vibration_index - 50
-    thermal_delta = thermal_index - 50
-    efficiency_delta = efficiency_index - 75  # baseline 75% for efficiency
+    vibration_index = fleet_stats['avg_vibration']
+    thermal_index = fleet_stats['avg_thermal']
+    efficiency_index = fleet_stats['avg_efficiency']
+    health_score = fleet_stats['avg_health_score']
     
     # Health Indices Section
     st.markdown("""
@@ -529,31 +525,40 @@ elif page == "📊 Fleet Analytics":
         st.session_state.last_health_update.strftime('%H:%M:%S')
     ), unsafe_allow_html=True)
     
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     
     with col1:
         st.metric(
-            label="Vibration Index",
-            value=f"{vibration_index:.1f}",
-            delta=f"{vibration_delta:+.1f}",
-            delta_color="inverse",
-            help="Lower values indicate healthier equipment"
+            label="Fleet Health Score",
+            value=f"{health_score:.1f}",
+            delta=f"{health_score - 75:.1f}",
+            delta_color="normal",
+            help="Composite health metric (0-100, higher is better)"
         )
     
     with col2:
         st.metric(
-            label="Thermal Index",
-            value=f"{thermal_index:.1f}",
-            delta=f"{thermal_delta:+.1f}",
+            label="Vibration Index",
+            value=f"{vibration_index:.1f}",
+            delta=f"{vibration_index - 50:+.1f}",
             delta_color="inverse",
-            help="Temperature-based health indicator"
+            help="Lower values indicate healthier equipment"
         )
     
     with col3:
         st.metric(
+            label="Thermal Index",
+            value=f"{thermal_index:.1f}",
+            delta=f"{thermal_index - 50:+.1f}",
+            delta_color="inverse",
+            help="Temperature-based health indicator"
+        )
+    
+    with col4:
+        st.metric(
             label="Efficiency Index",
             value=f"{efficiency_index:.1f}%",
-            delta=f"{efficiency_delta:+.1f}%",
+            delta=f"{efficiency_index - 75:+.1f}%",
             delta_color="normal",
             help="Overall operational efficiency"
         )
@@ -566,15 +571,13 @@ elif page == "📊 Fleet Analytics":
     col1, col2 = st.columns([2, 1])
     
     with col1:
-        # Create asset status table
         if st.session_state.uploaded_data is not None:
             asset_df = st.session_state.uploaded_data.copy()
-            asset_df['Risk Level'] = predictions['efficiency_index'].apply(
-                lambda x: "🟢 Operational" if x >= 70 else ("🟡 Attention" if x >= 40 else "🔴 Critical")
+            asset_df['Health Score'] = enriched_predictions['health_score'].values
+            asset_df['Risk Level'] = enriched_predictions['risk_level'].apply(
+                lambda x: f"🟢 {x}" if x == "Low" else (f"🟡 {x}" if x == "Medium" else (f"🟠 {x}" if x == "High" else f"🔴 {x}"))
             )
-            asset_df['Priority'] = predictions['efficiency_index'].apply(
-                lambda x: "Low" if x >= 70 else ("Medium" if x >= 40 else "High")
-            )
+            asset_df['Dominant Issue'] = enriched_predictions['dominant_issue'].values
             asset_df['Last Maintenance'] = "—"
             
             display_cols = []
@@ -582,24 +585,10 @@ elif page == "📊 Fleet Analytics":
                 display_cols.append('machine_id')
             if 'machine_type' in asset_df.columns:
                 display_cols.append('machine_type')
-            display_cols.extend(['Risk Level', 'Priority', 'Last Maintenance'])
+            display_cols.extend(['Health Score', 'Risk Level', 'Dominant Issue', 'Last Maintenance'])
             
             st.dataframe(
-                asset_df[display_cols].head(10),
-                use_container_width=True,
-                height=200
-            )
-        else:
-            placeholder_df = pd.DataFrame({
-                "Asset ID": ["—"],
-                "Type": ["—"],
-                "Risk Level": ["—"],
-                "Priority": ["—"],
-                "Last Maintenance": ["—"]
-            })
-            
-            st.dataframe(
-                placeholder_df,
+                asset_df[display_cols].head(10).style.format({'Health Score': '{:.1f}'}),
                 use_container_width=True,
                 height=200
             )
@@ -609,8 +598,8 @@ elif page == "📊 Fleet Analytics":
         <div style="background: rgba(74, 158, 255, 0.05); padding: 1rem; border-radius: 8px; height: 200px; display: flex; flex-direction: column; justify-content: center;">
             <p style="font-size: 0.75rem; color: #4a9eff; margin: 0; font-weight: 600; text-transform: uppercase;">Legend</p>
             <div style="margin-top: 1rem;">
-                <span class="status-badge status-operational">● Operational</span><br><br>
-                <span class="status-badge status-warning">● Attention</span><br><br>
+                <span class="status-badge status-operational">● Low Risk</span><br><br>
+                <span class="status-badge status-warning">● Medium/High Risk</span><br><br>
                 <span class="status-badge status-critical">● Critical</span>
             </div>
         </div>
@@ -618,51 +607,123 @@ elif page == "📊 Fleet Analytics":
     
     st.markdown("<br>", unsafe_allow_html=True)
     
-    # Fleet Distribution Chart
-    st.markdown("### 📊 Fleet Health Distribution")
+    # Explainable Visual Analytics
+    st.markdown("### 📊 Diagnostic Distribution Analysis")
     
-    # Calculate actual distribution
-    operational_count = len(predictions[predictions['efficiency_index'] >= 70])
-    attention_count = len(predictions[(predictions['efficiency_index'] >= 40) & (predictions['efficiency_index'] < 70)])
-    critical_count = len(predictions[predictions['efficiency_index'] < 40])
+    col1, col2 = st.columns(2)
     
-    fig = go.Figure(data=[
-        go.Bar(
-            x=["Operational", "Attention Required", "Critical"],
-            y=[operational_count, attention_count, critical_count],
-            marker=dict(
-                color=['#34d399', '#fbbf24', '#ef4444'],
-                line=dict(color='#1a2332', width=2)
-            ),
-            text=[operational_count, attention_count, critical_count],
-            textposition='auto',
+    with col1:
+        # Vibration distribution
+        fig_vib = px.histogram(
+            enriched_predictions,
+            x='vibration_index',
+            nbins=20,
+            title="Vibration Index Distribution",
+            labels={'vibration_index': 'Vibration Index', 'count': 'Asset Count'},
+            color_discrete_sequence=['#4a9eff']
         )
-    ])
+        fig_vib.add_vline(x=60, line_dash="dash", line_color="#ef4444", 
+                          annotation_text="Critical Threshold", annotation_position="top right")
+        fig_vib.update_layout(
+            plot_bgcolor='rgba(0,0,0,0)',
+            paper_bgcolor='rgba(0,0,0,0)',
+            font=dict(color='#b8c5d6', family='IBM Plex Sans'),
+            height=300,
+            showlegend=False
+        )
+        st.plotly_chart(fig_vib, use_container_width=True)
     
-    fig.update_layout(
+    with col2:
+        # Thermal distribution
+        fig_thermal = px.histogram(
+            enriched_predictions,
+            x='thermal_index',
+            nbins=20,
+            title="Thermal Index Distribution",
+            labels={'thermal_index': 'Thermal Index', 'count': 'Asset Count'},
+            color_discrete_sequence=['#fbbf24']
+        )
+        fig_thermal.add_vline(x=60, line_dash="dash", line_color="#ef4444",
+                              annotation_text="Critical Threshold", annotation_position="top right")
+        fig_thermal.update_layout(
+            plot_bgcolor='rgba(0,0,0,0)',
+            paper_bgcolor='rgba(0,0,0,0)',
+            font=dict(color='#b8c5d6', family='IBM Plex Sans'),
+            height=300,
+            showlegend=False
+        )
+        st.plotly_chart(fig_thermal, use_container_width=True)
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # Efficiency distribution
+        fig_eff = px.histogram(
+            enriched_predictions,
+            x='efficiency_index',
+            nbins=20,
+            title="Efficiency Index Distribution",
+            labels={'efficiency_index': 'Efficiency Index (%)', 'count': 'Asset Count'},
+            color_discrete_sequence=['#34d399']
+        )
+        fig_eff.add_vline(x=70, line_dash="dash", line_color="#fbbf24",
+                          annotation_text="Target Threshold", annotation_position="top left")
+        fig_eff.update_layout(
+            plot_bgcolor='rgba(0,0,0,0)',
+            paper_bgcolor='rgba(0,0,0,0)',
+            font=dict(color='#b8c5d6', family='IBM Plex Sans'),
+            height=300,
+            showlegend=False
+        )
+        st.plotly_chart(fig_eff, use_container_width=True)
+    
+    with col2:
+        # Risk level distribution
+        risk_counts = enriched_predictions['risk_level'].value_counts()
+        fig_risk = go.Figure(data=[
+            go.Bar(
+                x=risk_counts.index,
+                y=risk_counts.values,
+                marker=dict(
+                    color=['#34d399' if r == 'Low' else '#fbbf24' if r == 'Medium' else '#ef9944' if r == 'High' else '#ef4444' for r in risk_counts.index],
+                    line=dict(color='#1a2332', width=2)
+                ),
+                text=risk_counts.values,
+                textposition='auto',
+            )
+        ])
+        fig_risk.update_layout(
+            title="Risk Level Distribution",
+            plot_bgcolor='rgba(0,0,0,0)',
+            paper_bgcolor='rgba(0,0,0,0)',
+            font=dict(color='#b8c5d6', family='IBM Plex Sans'),
+            height=300,
+            xaxis=dict(title="Risk Level", gridcolor='#2d4a5f', showgrid=False),
+            yaxis=dict(title="Asset Count", gridcolor='#2d4a5f', showgrid=True)
+        )
+        st.plotly_chart(fig_risk, use_container_width=True)
+    
+    # Correlation analysis
+    st.markdown("### 🔗 Index Correlation Analysis")
+    
+    correlation_data = enriched_predictions[['vibration_index', 'thermal_index', 'efficiency_index']].corr()
+    
+    fig_corr = px.imshow(
+        correlation_data,
+        text_auto='.2f',
+        aspect="auto",
+        color_continuous_scale='RdYlGn_r',
+        title="Correlation Matrix: Understanding Failure Patterns"
+    )
+    fig_corr.update_layout(
         plot_bgcolor='rgba(0,0,0,0)',
         paper_bgcolor='rgba(0,0,0,0)',
         font=dict(color='#b8c5d6', family='IBM Plex Sans'),
-        height=300,
-        margin=dict(l=20, r=20, t=40, b=20),
-        title=dict(
-            text="Asset Status Overview",
-            font=dict(size=14, color='#b8c5d6')
-        ),
-        xaxis=dict(
-            gridcolor='#2d4a5f',
-            showgrid=False
-        ),
-        yaxis=dict(
-            gridcolor='#2d4a5f',
-            showgrid=True,
-            title="Count"
-        )
+        height=400
     )
+    st.plotly_chart(fig_corr, use_container_width=True)
     
-    st.plotly_chart(fig, use_container_width=True)
-    
-    # Auto-refresh every second to update countdown
+    # Auto-refresh
     time.sleep(1)
     st.rerun()
 
@@ -670,13 +731,29 @@ elif page == "📊 Fleet Analytics":
 elif page == "🤖 AI Intelligence Hub":
     st.markdown("### 🧠 AI-Powered Maintenance Intelligence")
     
-    # Check if predictions are available
     if st.session_state.predictions is None:
         st.warning("⚠️ No prediction data available. Please upload and process data in the Data Integration page first.")
         st.stop()
     
+    # Check AI service configuration
+    ai_service = st.session_state.ai_service
+    
+    if not ai_service.is_configured:
+        st.error("""
+        ⚠️ **Google Gemini AI not configured**
+        
+        To enable AI-powered analysis:
+        1. Get a free API key from [Google AI Studio](https://makersuite.google.com/app/apikey)
+        2. Set environment variable: `export GOOGLE_AI_API_KEY=your_key_here`
+        3. Restart the application
+        
+        Alternatively, set the API key in your code or config file.
+        """)
+        st.stop()
+    
     # Machine selector
     col1, col2, col3 = st.columns([2, 1, 1])
+    
     with col1:
         machine_options = []
         if st.session_state.uploaded_data is not None and 'machine_id' in st.session_state.uploaded_data.columns:
@@ -689,438 +766,167 @@ elif page == "🤖 AI Intelligence Hub":
             machine_options,
             help="Choose an asset to view AI-generated insights"
         )
+        selected_index = machine_options.index(selected_machine)
+    
     with col2:
         analysis_depth = st.selectbox("Analysis Depth", ["Quick Scan", "Standard", "Deep Analysis"])
+    
     with col3:
         st.markdown("<br>", unsafe_allow_html=True)
         analyze_btn = st.button("🔍 Generate Analysis", use_container_width=True)
     
     st.markdown("---")
     
-    # Simulated LLM output - In production, this would call your actual LLM
-    if analyze_btn or 'ai_analysis_generated' in st.session_state:
-        st.session_state.ai_analysis_generated = True
+    # Generate or display AI analysis
+    if analyze_btn:
+        # Get machine data and predictions
+        machine_data, prediction_data = get_machine_analytics(
+            selected_index,
+            st.session_state.uploaded_data,
+            st.session_state.predictions
+        )
         
-        # Smart Alerts Section
-        st.markdown("### 🚨 Smart Alerts & Notifications")
+        # Show loading state
+        with st.spinner(f"🤖 AI analyzing {selected_machine} using {analysis_depth} mode..."):
+            # Call AI service
+            analysis_result = ai_service.generate_maintenance_analysis(
+                machine_data=machine_data,
+                prediction_data=prediction_data,
+                analysis_depth=analysis_depth
+            )
         
-        col1, col2 = st.columns(2)
+        # Store in session state
+        st.session_state.ai_analysis = analysis_result
+        st.session_state.ai_analysis_machine = selected_machine
+        st.session_state.ai_analysis_depth = analysis_depth
+    
+    # Display AI analysis if available
+    if 'ai_analysis' in st.session_state:
+        analysis = st.session_state.ai_analysis
         
-        with col1:
-            st.markdown("""
-            <div style="background: linear-gradient(135deg, rgba(239, 68, 68, 0.2) 0%, rgba(220, 38, 38, 0.1) 100%); 
-                        padding: 1.5rem; border-radius: 12px; border-left: 4px solid #ef4444; margin-bottom: 1rem;">
-                <p style="font-size: 0.75rem; color: #ef4444; margin: 0; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;">
-                    ⚠️ CRITICAL ALERT
-                </p>
-                <p style="color: #fca5a5; font-size: 1rem; margin-top: 0.5rem; font-weight: 600;">
-                    Immediate Maintenance Required
-                </p>
-                <p style="color: #b8c5d6; font-size: 0.85rem; margin-top: 0.8rem; line-height: 1.5;">
-                    High vibration levels detected on MTR-001. Bearing failure risk is elevated. 
-                    Recommend immediate shutdown and inspection.
-                </p>
-                <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid rgba(239, 68, 68, 0.3);">
-                    <p style="font-size: 0.75rem; color: #7a92a8; margin: 0;">
-                        📞 Emergency contacts notified<br>
-                        📧 Maintenance team alerted<br>
-                        📱 SMS sent to on-call engineer
-                    </p>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+        if analysis['status'] == 'error':
+            st.error(f"❌ AI Analysis Failed: {analysis['error_message']}")
+            st.stop()
         
-        with col2:
-            st.markdown("""
-            <div style="background: linear-gradient(135deg, rgba(251, 191, 36, 0.2) 0%, rgba(245, 158, 11, 0.1) 100%); 
-                        padding: 1.5rem; border-radius: 12px; border-left: 4px solid #fbbf24; margin-bottom: 1rem;">
-                <p style="font-size: 0.75rem; color: #fbbf24; margin: 0; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;">
-                    ⚡ ATTENTION NEEDED
-                </p>
-                <p style="color: #fcd34d; font-size: 1rem; margin-top: 0.5rem; font-weight: 600;">
-                    Scheduled Maintenance Due
-                </p>
-                <p style="color: #b8c5d6; font-size: 0.85rem; margin-top: 0.8rem; line-height: 1.5;">
-                    PMP-042 pump efficiency has decreased by 12% over the past week. 
-                    Preventive maintenance recommended within 72 hours.
-                </p>
-                <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid rgba(251, 191, 36, 0.3);">
-                    <p style="font-size: 0.75rem; color: #7a92a8; margin: 0;">
-                        📅 Maintenance window: Next 3 days<br>
-                        👷 Assigned to: Team B<br>
-                        💰 Estimated cost: $2,400
-                    </p>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+        # Machine info header
+        st.markdown(f"""
+        <div style="background: linear-gradient(90deg, #1e3a5f 0%, #2d5a7b 100%); padding: 1rem; border-radius: 8px; margin-bottom: 1.5rem;">
+            <p style="font-size: 0.85rem; color: #b8c5d6; margin: 0;">
+                <strong style="color: #4a9eff;">Asset:</strong> {st.session_state.ai_analysis_machine} | 
+                <strong style="color: #4a9eff;">Analysis Depth:</strong> {st.session_state.ai_analysis_depth}
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
         
-        st.markdown("---")
-        
-        # Machine Health Summary
-        st.markdown("### 📊 Machine Health Summary")
+        # Health metrics
+        pred_data = analysis['prediction_data']
+        health_score = pred_data.get('health_score', 0)
+        risk_level = pred_data.get('risk_level', 'Unknown')
+        dominant_issue = pred_data.get('dominant_issue', 'Unknown')
         
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            st.markdown("""
-            <div style="text-align: center; padding: 1.5rem; background: rgba(251, 191, 36, 0.1); border-radius: 8px;">
-                <p style="font-size: 2.5rem; margin: 0; color: #fbbf24; font-weight: 700;">58</p>
-                <p style="font-size: 0.8rem; color: #b8c5d6; margin-top: 0.5rem; text-transform: uppercase; letter-spacing: 0.5px;">Health Score</p>
-                <p style="font-size: 0.7rem; color: #fbbf24; margin-top: 0.3rem;">Attention Range</p>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        with col2:
-            st.markdown("""
-            <div style="text-align: center; padding: 1.5rem; background: rgba(251, 191, 36, 0.1); border-radius: 8px;">
-                <p style="font-size: 2.5rem; margin: 0; color: #fbbf24; font-weight: 700;">67%</p>
-                <p style="font-size: 0.8rem; color: #b8c5d6; margin-top: 0.5rem; text-transform: uppercase; letter-spacing: 0.5px;">Current Efficiency</p>
-                <p style="font-size: 0.7rem; color: #fbbf24; margin-top: 0.3rem;">33% Loss Detected</p>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        with col3:
-            st.markdown("""
+            risk_color = {
+                'Low': '#34d399',
+                'Medium': '#fbbf24',
+                'High': '#ef9944',
+                'Critical': '#ef4444'
+            }.get(risk_level, '#7a92a8')
+            
+            st.markdown(f"""
             <div style="text-align: center; padding: 1.5rem; background: rgba(74, 158, 255, 0.1); border-radius: 8px;">
-                <p style="font-size: 2.5rem; margin: 0; color: #4a9eff; font-weight: 700;">2.4</p>
-                <p style="font-size: 0.8rem; color: #b8c5d6; margin-top: 0.5rem; text-transform: uppercase; letter-spacing: 0.5px;">Days Until Failure</p>
-                <p style="font-size: 0.7rem; color: #4a9eff; margin-top: 0.3rem;">Predicted</p>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        st.markdown("<br>", unsafe_allow_html=True)
-        
-        # AI Diagnostic Report
-        st.markdown("### 🔬 AI Diagnostic Analysis")
-        
-        st.markdown("""
-        <div style="background: linear-gradient(135deg, #1a2332 0%, #243447 100%); 
-                    padding: 2rem; border-radius: 12px; border: 1px solid #2d4a5f; margin-bottom: 1.5rem;">
-            <p style="font-size: 1.1rem; color: #4a9eff; margin: 0 0 1rem 0; font-weight: 600;">
-                🎯 Primary Diagnosis: Bearing Degradation
-            </p>
-            <p style="color: #e8eaed; font-size: 0.95rem; line-height: 1.8; margin-bottom: 1.5rem;">
-                Analysis of sensor data from MTR-001 reveals critical bearing wear patterns. The combination of 
-                <span style="color: #ef4444; font-weight: 600;">elevated vibration signatures (amplitude: 8.4mm/s RMS)</span> 
-                and <span style="color: #fbbf24; font-weight: 600;">thermal stress (bearing temp: 87°C)</span> 
-                strongly indicates advanced bearing degradation, likely in the drive-end bearing assembly.
-            </p>
-            
-            <div style="background: rgba(74, 158, 255, 0.1); padding: 1.2rem; border-radius: 8px; border-left: 3px solid #4a9eff; margin-bottom: 1.5rem;">
-                <p style="font-size: 0.85rem; color: #4a9eff; margin: 0 0 0.5rem 0; font-weight: 600;">
-                    🔍 ROOT CAUSE ANALYSIS
-                </p>
-                <p style="color: #b8c5d6; font-size: 0.85rem; line-height: 1.6; margin: 0;">
-                    <strong>Primary Factors:</strong><br>
-                    • Inadequate lubrication (last service: 147 days ago, recommended: 90 days)<br>
-                    • Extended operation above rated load (112% of nominal capacity for 23 days)<br>
-                    • Contamination from environmental particles (detected in vibration spectrum analysis)<br>
-                    • Bearing fatigue after 14,247 operating hours (approaching L10 life expectancy)
-                </p>
-            </div>
-            
-            <p style="color: #e8eaed; font-size: 0.95rem; line-height: 1.8; margin-bottom: 1.5rem;">
-                The degradation pattern suggests the bearing has entered <span style="color: #ef4444; font-weight: 600;">Stage 3 failure progression</span>, 
-                where rapid exponential degradation typically occurs. Without intervention, complete bearing seizure 
-                is predicted within <span style="color: #ef4444; font-weight: 600;">48-72 hours</span>.
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # Financial Impact Analysis
-        st.markdown("### 💰 Loss & Efficiency Impact Analysis")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown("""
-            <div style="background: rgba(239, 68, 68, 0.1); padding: 1.5rem; border-radius: 10px; border: 1px solid rgba(239, 68, 68, 0.3);">
-                <p style="font-size: 0.8rem; color: #ef4444; margin: 0 0 1rem 0; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;">
-                    📉 EFFICIENCY LOSS BREAKDOWN
-                </p>
-                <div style="margin-bottom: 1rem;">
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
-                        <span style="color: #b8c5d6; font-size: 0.85rem;">Mechanical Efficiency Loss</span>
-                        <span style="color: #ef4444; font-size: 0.85rem; font-weight: 600;">-22%</span>
-                    </div>
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
-                        <span style="color: #b8c5d6; font-size: 0.85rem;">Thermal Losses (friction)</span>
-                        <span style="color: #ef4444; font-size: 0.85rem; font-weight: 600;">-8%</span>
-                    </div>
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
-                        <span style="color: #b8c5d6; font-size: 0.85rem;">Vibration Energy Loss</span>
-                        <span style="color: #ef4444; font-size: 0.85rem; font-weight: 600;">-3%</span>
-                    </div>
-                    <div style="border-top: 1px solid rgba(239, 68, 68, 0.3); padding-top: 0.5rem; margin-top: 0.5rem;">
-                        <div style="display: flex; justify-content: space-between;">
-                            <span style="color: #e8eaed; font-size: 0.9rem; font-weight: 600;">Total Efficiency Loss</span>
-                            <span style="color: #ef4444; font-size: 1.1rem; font-weight: 700;">-33%</span>
-                        </div>
-                    </div>
-                </div>
+                <p style="font-size: 2.5rem; margin: 0; color: {risk_color}; font-weight: 700;">{health_score:.0f}</p>
+                <p style="font-size: 0.8rem; color: #b8c5d6; margin-top: 0.5rem; text-transform: uppercase; letter-spacing: 0.5px;">Health Score</p>
+                <p style="font-size: 0.7rem; color: {risk_color}; margin-top: 0.3rem;">{risk_level} Risk</p>
             </div>
             """, unsafe_allow_html=True)
         
         with col2:
-            st.markdown("""
-            <div style="background: rgba(251, 191, 36, 0.1); padding: 1.5rem; border-radius: 10px; border: 1px solid rgba(251, 191, 36, 0.3);">
-                <p style="font-size: 0.8rem; color: #fbbf24; margin: 0 0 1rem 0; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;">
-                    💵 FINANCIAL IMPACT (30 DAYS)
-                </p>
-                <div style="margin-bottom: 1rem;">
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
-                        <span style="color: #b8c5d6; font-size: 0.85rem;">Excess Energy Consumption</span>
-                        <span style="color: #fbbf24; font-size: 0.85rem; font-weight: 600;">$8,420</span>
-                    </div>
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
-                        <span style="color: #b8c5d6; font-size: 0.85rem;">Reduced Output Value</span>
-                        <span style="color: #fbbf24; font-size: 0.85rem; font-weight: 600;">$12,300</span>
-                    </div>
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
-                        <span style="color: #b8c5d6; font-size: 0.85rem;">Quality Impact Costs</span>
-                        <span style="color: #fbbf24; font-size: 0.85rem; font-weight: 600;">$3,150</span>
-                    </div>
-                    <div style="border-top: 1px solid rgba(251, 191, 36, 0.3); padding-top: 0.5rem; margin-top: 0.5rem;">
-                        <div style="display: flex; justify-content: space-between;">
-                            <span style="color: #e8eaed; font-size: 0.9rem; font-weight: 600;">Total Monthly Loss</span>
-                            <span style="color: #fbbf24; font-size: 1.1rem; font-weight: 700;">$23,870</span>
-                        </div>
-                    </div>
-                </div>
-                <p style="color: #7a92a8; font-size: 0.75rem; margin: 0.8rem 0 0 0; line-height: 1.4;">
-                    ⚠️ Catastrophic failure could result in $147,000 in downtime costs plus $31,000 in emergency repairs.
-                </p>
+            st.markdown(f"""
+            <div style="text-align: center; padding: 1.5rem; background: rgba(74, 158, 255, 0.1); border-radius: 8px;">
+                <p style="font-size: 2.5rem; margin: 0; color: #4a9eff; font-weight: 700;">{pred_data['efficiency_index']:.0f}%</p>
+                <p style="font-size: 0.8rem; color: #b8c5d6; margin-top: 0.5rem; text-transform: uppercase; letter-spacing: 0.5px;">Efficiency</p>
+                <p style="font-size: 0.7rem; color: #fbbf24; margin-top: 0.3rem;">{100 - pred_data['efficiency_index']:.0f}% Loss</p>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col3:
+            st.markdown(f"""
+            <div style="text-align: center; padding: 1.5rem; background: rgba(74, 158, 255, 0.1); border-radius: 8px;">
+                <p style="font-size: 1.5rem; margin: 0; color: #4a9eff; font-weight: 700;">{dominant_issue}</p>
+                <p style="font-size: 0.8rem; color: #b8c5d6; margin-top: 0.5rem; text-transform: uppercase; letter-spacing: 0.5px;">Primary Issue</p>
+                <p style="font-size: 0.7rem; color: #4a9eff; margin-top: 0.3rem;">Dominant Factor</p>
             </div>
             """, unsafe_allow_html=True)
         
         st.markdown("<br>", unsafe_allow_html=True)
         
-        # Maintenance Timeline
-        st.markdown("### 📅 Recommended Maintenance Timeline")
-        
-        st.markdown("""
-        <div style="background: linear-gradient(135deg, #1a2332 0%, #243447 100%); 
-                    padding: 1.8rem; border-radius: 12px; border: 1px solid #2d4a5f;">
-            <div style="position: relative; padding-left: 2rem;">
-                <!-- Immediate Action -->
-                <div style="margin-bottom: 1.8rem; position: relative;">
-                    <div style="position: absolute; left: -2rem; top: 0.3rem; width: 12px; height: 12px; 
-                                background: #ef4444; border-radius: 50%; border: 3px solid #1a2332;"></div>
-                    <div style="position: absolute; left: -1.45rem; top: 1.5rem; width: 2px; height: calc(100% + 1rem); 
-                                background: linear-gradient(180deg, #ef4444 0%, #2d4a5f 100%);"></div>
-                    <p style="color: #ef4444; font-size: 0.75rem; font-weight: 700; margin: 0 0 0.3rem 0; text-transform: uppercase; letter-spacing: 1px;">
-                        IMMEDIATE (0-6 Hours)
-                    </p>
-                    <p style="color: #e8eaed; font-size: 0.95rem; font-weight: 600; margin: 0 0 0.5rem 0;">
-                        Emergency Response Protocol
-                    </p>
-                    <p style="color: #b8c5d6; font-size: 0.85rem; line-height: 1.6; margin: 0;">
-                        • Reduce load to 60% capacity immediately<br>
-                        • Deploy continuous vibration monitoring<br>
-                        • Prepare spare bearing assemblies (P/N: BRG-2847-HD)<br>
-                        • Schedule shutdown window with production team
-                    </p>
-                </div>
-                
-                <!-- Short Term -->
-                <div style="margin-bottom: 1.8rem; position: relative;">
-                    <div style="position: absolute; left: -2rem; top: 0.3rem; width: 12px; height: 12px; 
-                                background: #fbbf24; border-radius: 50%; border: 3px solid #1a2332;"></div>
-                    <div style="position: absolute; left: -1.45rem; top: 1.5rem; width: 2px; height: calc(100% + 1rem); 
-                                background: linear-gradient(180deg, #fbbf24 0%, #2d4a5f 100%);"></div>
-                    <p style="color: #fbbf24; font-size: 0.75rem; font-weight: 700; margin: 0 0 0.3rem 0; text-transform: uppercase; letter-spacing: 1px;">
-                        SHORT-TERM (6-48 Hours)
-                    </p>
-                    <p style="color: #e8eaed; font-size: 0.95rem; font-weight: 600; margin: 0 0 0.5rem 0;">
-                        Bearing Replacement & System Overhaul
-                    </p>
-                    <p style="color: #b8c5d6; font-size: 0.85rem; line-height: 1.6; margin: 0;">
-                        • Complete motor shutdown and lockout/tagout<br>
-                        • Replace drive-end and non-drive-end bearings<br>
-                        • Inspect shaft for damage, replace if scoring detected<br>
-                        • Clean housing, apply appropriate lubricant (NLGI Grade 2)<br>
-                        • Perform alignment verification (tolerance: ±0.002")<br>
-                        • Conduct vibration baseline testing
-                    </p>
-                </div>
-                
-                <!-- Medium Term -->
-                <div style="margin-bottom: 1.8rem; position: relative;">
-                    <div style="position: absolute; left: -2rem; top: 0.3rem; width: 12px; height: 12px; 
-                                background: #4a9eff; border-radius: 50%; border: 3px solid #1a2332;"></div>
-                    <div style="position: absolute; left: -1.45rem; top: 1.5rem; width: 2px; height: calc(100% + 1rem); 
-                                background: linear-gradient(180deg, #4a9eff 0%, #2d4a5f 100%);"></div>
-                    <p style="color: #4a9eff; font-size: 0.75rem; font-weight: 700; margin: 0 0 0.3rem 0; text-transform: uppercase; letter-spacing: 1px;">
-                        MEDIUM-TERM (1-2 Weeks)
-                    </p>
-                    <p style="color: #e8eaed; font-size: 0.95rem; font-weight: 600; margin: 0 0 0.5rem 0;">
-                        System Verification & Optimization
-                    </p>
-                    <p style="color: #b8c5d6; font-size: 0.85rem; line-height: 1.6; margin: 0;">
-                        • Monitor post-repair vibration trends (target: <2.5mm/s)<br>
-                        • Verify thermal performance (bearing temp: <65°C)<br>
-                        • Optimize load distribution patterns<br>
-                        • Update maintenance logs and sensor baselines<br>
-                        • Train operators on early warning signs
-                    </p>
-                </div>
-                
-                <!-- Long Term -->
-                <div style="position: relative;">
-                    <div style="position: absolute; left: -2rem; top: 0.3rem; width: 12px; height: 12px; 
-                                background: #34d399; border-radius: 50%; border: 3px solid #1a2332;"></div>
-                    <p style="color: #34d399; font-size: 0.75rem; font-weight: 700; margin: 0 0 0.3rem 0; text-transform: uppercase; letter-spacing: 1px;">
-                        LONG-TERM (Ongoing)
-                    </p>
-                    <p style="color: #e8eaed; font-size: 0.95rem; font-weight: 600; margin: 0 0 0.5rem 0;">
-                        Preventive Strategy Implementation
-                    </p>
-                    <p style="color: #b8c5d6; font-size: 0.85rem; line-height: 1.6; margin: 0;">
-                        • Implement 60-day lubrication schedule<br>
-                        • Install permanent vibration sensors with cloud connectivity<br>
-                        • Conduct quarterly thermographic surveys<br>
-                        • Review loading patterns to prevent overload conditions<br>
-                        • Consider bearing upgrade to sealed design for contamination resistance
-                    </p>
-                </div>
+        # AI-generated analysis sections
+        if analysis.get('root_cause'):
+            st.markdown("### 🔬 AI Root Cause Diagnosis")
+            st.markdown(f"""
+            <div style="background: linear-gradient(135deg, #1a2332 0%, #243447 100%); padding: 1.5rem; border-radius: 12px; border: 1px solid #2d4a5f; margin-bottom: 1.5rem;">
+                <p style="color: #e8eaed; font-size: 0.95rem; line-height: 1.8; white-space: pre-wrap;">{analysis['root_cause']}</p>
             </div>
-        </div>
-        """, unsafe_allow_html=True)
+            """, unsafe_allow_html=True)
         
-        st.markdown("<br>", unsafe_allow_html=True)
+        if analysis.get('risk_assessment'):
+            st.markdown("### ⚠️ Risk Assessment")
+            st.markdown(f"""
+            <div style="background: linear-gradient(135deg, rgba(239, 68, 68, 0.2) 0%, rgba(220, 38, 38, 0.1) 100%); 
+                        padding: 1.5rem; border-radius: 12px; border-left: 4px solid #ef4444; margin-bottom: 1.5rem;">
+                <p style="color: #e8eaed; font-size: 0.95rem; line-height: 1.8; white-space: pre-wrap;">{analysis['risk_assessment']}</p>
+            </div>
+            """, unsafe_allow_html=True)
         
-        # Climate & Geographical Impact
-        st.markdown("### 🌍 Environmental & Geographical Impact Analysis")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown("""
+        if analysis.get('maintenance_recommendations'):
+            st.markdown("### 🛠️ Maintenance Recommendations")
+            st.markdown(f"""
             <div style="background: linear-gradient(135deg, rgba(74, 158, 255, 0.15) 0%, rgba(74, 158, 255, 0.05) 100%); 
-                        padding: 1.5rem; border-radius: 10px; border: 1px solid rgba(74, 158, 255, 0.3);">
-                <p style="font-size: 0.8rem; color: #4a9eff; margin: 0 0 1rem 0; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;">
-                    🌡️ CLIMATE FACTORS
-                </p>
-                <p style="color: #e8eaed; font-size: 0.9rem; line-height: 1.7; margin: 0;">
-                    <strong style="color: #4a9eff;">High Humidity Impact:</strong><br>
-                    <span style="color: #b8c5d6; font-size: 0.85rem;">
-                    Current ambient humidity (78%) accelerates lubricant degradation and promotes corrosion. 
-                    The facility's coastal location exposes equipment to salt-laden air, increasing oxidation rates 
-                    by an estimated 40%.
-                    </span>
-                </p>
-                <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid rgba(74, 158, 255, 0.2);">
-                    <p style="color: #b8c5d6; font-size: 0.8rem; line-height: 1.5; margin: 0;">
-                        📍 <strong>Location:</strong> Mumbai, India (Coastal Industrial Zone)<br>
-                        🌡️ <strong>Avg Temp:</strong> 32°C (Summer), 24°C (Winter)<br>
-                        💧 <strong>Humidity:</strong> 65-85% year-round<br>
-                        🌊 <strong>Salt Air Exposure:</strong> High (2.1km from coast)
-                    </p>
-                </div>
+                        padding: 1.5rem; border-radius: 12px; border: 1px solid rgba(74, 158, 255, 0.3); margin-bottom: 1.5rem;">
+                <p style="color: #e8eaed; font-size: 0.95rem; line-height: 1.8; white-space: pre-wrap;">{analysis['maintenance_recommendations']}</p>
             </div>
             """, unsafe_allow_html=True)
         
-        with col2:
-            st.markdown("""
-            <div style="background: linear-gradient(135deg, rgba(52, 211, 153, 0.15) 0%, rgba(52, 211, 153, 0.05) 100%); 
-                        padding: 1.5rem; border-radius: 10px; border: 1px solid rgba(52, 211, 153, 0.3);">
-                <p style="font-size: 0.8rem; color: #34d399; margin: 0 0 1rem 0; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;">
-                    🛡️ ENVIRONMENTAL MITIGATION
-                </p>
-                <p style="color: #e8eaed; font-size: 0.9rem; line-height: 1.7; margin: 0 0 1rem 0;">
-                    <strong style="color: #34d399;">Recommended Adaptations:</strong>
-                </p>
-                <p style="color: #b8c5d6; font-size: 0.85rem; line-height: 1.6; margin: 0;">
-                    • Switch to synthetic lubricants with superior moisture resistance<br>
-                    • Install humidity-controlled enclosures (target: 40-50% RH)<br>
-                    • Apply corrosion-resistant coatings to exposed surfaces<br>
-                    • Implement weekly condensation drainage procedures<br>
-                    • Consider bearing seals designed for high-humidity environments
-                </p>
-                <div style="margin-top: 1rem; padding: 0.8rem; background: rgba(52, 211, 153, 0.1); border-radius: 6px;">
-                    <p style="color: #34d399; font-size: 0.75rem; margin: 0; font-weight: 600;">
-                        ✓ Implementing these measures could extend bearing life by 60-80% in this climate.
-                    </p>
-                </div>
+        if analysis.get('timeline'):
+            st.markdown("### 📅 Maintenance Timeline")
+            st.markdown(f"""
+            <div style="background: linear-gradient(135deg, #1a2332 0%, #243447 100%); 
+                        padding: 1.5rem; border-radius: 12px; border: 1px solid #2d4a5f; margin-bottom: 1.5rem;">
+                <p style="color: #e8eaed; font-size: 0.95rem; line-height: 1.8; white-space: pre-wrap;">{analysis['timeline']}</p>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        if analysis.get('cost_impact'):
+            st.markdown("### 💰 Financial Impact Analysis")
+            st.markdown(f"""
+            <div style="background: linear-gradient(135deg, rgba(251, 191, 36, 0.15) 0%, rgba(245, 158, 11, 0.05) 100%); 
+                        padding: 1.5rem; border-radius: 12px; border: 1px solid rgba(251, 191, 36, 0.3); margin-bottom: 1.5rem;">
+                <p style="color: #e8eaed; font-size: 0.95rem; line-height: 1.8; white-space: pre-wrap;">{analysis['cost_impact']}</p>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        # Full AI response (collapsible)
+        with st.expander("📄 View Complete AI Analysis"):
+            st.markdown(f"""
+            <div style="background: #1a2332; padding: 1rem; border-radius: 8px; font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; color: #b8c5d6;">
+                {analysis['full_response'].replace('\n', '<br>')}
             </div>
             """, unsafe_allow_html=True)
         
         st.markdown("<br>", unsafe_allow_html=True)
         
-        # Maintenance Report Summary
-        st.markdown("### 📋 Comprehensive Maintenance Report")
-        
-        st.markdown("""
-        <div style="background: linear-gradient(135deg, #1a2332 0%, #243447 100%); 
-                    padding: 2rem; border-radius: 12px; border: 1px solid #2d4a5f;">
-            <div style="border-bottom: 2px solid #2d4a5f; padding-bottom: 1rem; margin-bottom: 1.5rem;">
-                <h3 style="color: #4a9eff; margin: 0; font-size: 1.2rem;">Executive Summary</h3>
-                <p style="color: #7a92a8; font-size: 0.8rem; margin: 0.3rem 0 0 0;">
-                    Generated: January 30, 2026 | Asset: MTR-001 | Priority: CRITICAL
-                </p>
-            </div>
-            
-            <p style="color: #e8eaed; font-size: 0.95rem; line-height: 1.8; margin-bottom: 1.5rem;">
-                Motor MTR-001 has reached a critical failure threshold requiring immediate intervention. 
-                The primary failure mode—bearing degradation—has been conclusively identified through 
-                multi-sensor analysis combining vibration spectroscopy, thermal imaging, and acoustic emission patterns.
-            </p>
-            
-            <div style="background: rgba(239, 68, 68, 0.1); padding: 1.2rem; border-radius: 8px; border-left: 3px solid #ef4444; margin-bottom: 1.5rem;">
-                <p style="color: #ef4444; font-size: 0.85rem; font-weight: 600; margin: 0 0 0.5rem 0;">
-                    ⚠️ CRITICAL FINDINGS
-                </p>
-                <p style="color: #b8c5d6; font-size: 0.85rem; line-height: 1.6; margin: 0;">
-                    • Vibration amplitude exceeds ISO 10816 alarm threshold by 340%<br>
-                    • Bearing temperature 22°C above normal operating range<br>
-                    • Efficiency degradation quantified at 33% below baseline<br>
-                    • Financial impact: $23,870/month in losses, potential $178,000 catastrophic failure cost
-                </p>
-            </div>
-            
-            <div style="background: rgba(74, 158, 255, 0.1); padding: 1.2rem; border-radius: 8px; border-left: 3px solid #4a9eff; margin-bottom: 1.5rem;">
-                <p style="color: #4a9eff; font-size: 0.85rem; font-weight: 600; margin: 0 0 0.5rem 0;">
-                    💡 AI RECOMMENDATIONS
-                </p>
-                <p style="color: #b8c5d6; font-size: 0.85rem; line-height: 1.6; margin: 0;">
-                    <strong>Immediate Action:</strong> Reduce operational load to 60% capacity and schedule emergency maintenance within 6 hours.
-                    Deploy continuous monitoring to detect rapid degradation patterns. Prepare for 24-48 hour maintenance window.<br><br>
-                    
-                    <strong>Root Cause Mitigation:</strong> Address extended lubrication intervals (current: 147 days, recommended: 60-90 days max for coastal environment).
-                    Review loading protocols to prevent sustained overload conditions. Implement environmental controls to combat high-humidity corrosion acceleration.<br><br>
-                    
-                    <strong>Long-term Strategy:</strong> Transition to sealed bearing assemblies with synthetic lubrication designed for tropical coastal climates.
-                    Install permanent vibration monitoring with predictive analytics to prevent future critical failures.
-                </p>
-            </div>
-            
-            <div style="display: flex; gap: 1rem; margin-top: 1.5rem;">
-                <div style="flex: 1; text-align: center; padding: 1rem; background: rgba(239, 68, 68, 0.1); border-radius: 8px;">
-                    <p style="color: #ef4444; font-size: 1.5rem; font-weight: 700; margin: 0;">CRITICAL</p>
-                    <p style="color: #b8c5d6; font-size: 0.75rem; margin: 0.3rem 0 0 0;">Current Status</p>
-                </div>
-                <div style="flex: 1; text-align: center; padding: 1rem; background: rgba(251, 191, 36, 0.1); border-radius: 8px;">
-                    <p style="color: #fbbf24; font-size: 1.5rem; font-weight: 700; margin: 0;">6 HRS</p>
-                    <p style="color: #b8c5d6; font-size: 0.75rem; margin: 0.3rem 0 0 0;">Response Window</p>
-                </div>
-                <div style="flex: 1; text-align: center; padding: 1rem; background: rgba(74, 158, 255, 0.1); border-radius: 8px;">
-                    <p style="color: #4a9eff; font-size: 1.5rem; font-weight: 700; margin: 0;">$178K</p>
-                    <p style="color: #b8c5d6; font-size: 0.75rem; margin: 0.3rem 0 0 0;">Failure Cost Risk</p>
-                </div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        st.markdown("<br>", unsafe_allow_html=True)
-        
-        # Export Options
+        # Export options
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.button("📄 Export as PDF", use_container_width=True)
+            st.button("📄 Export as PDF", use_container_width=True, disabled=True, help="Feature coming soon")
         with col2:
-            st.button("📧 Email to Team", use_container_width=True)
+            st.button("📧 Email to Team", use_container_width=True, disabled=True, help="Feature coming soon")
         with col3:
-            st.button("📊 Generate Detailed Report", use_container_width=True)
+            if st.button("🔄 Generate New Analysis", use_container_width=True):
+                del st.session_state.ai_analysis
+                st.rerun()
     
     else:
         # Before analysis is generated
@@ -1128,10 +934,11 @@ elif page == "🤖 AI Intelligence Hub":
         <div style="padding: 4rem 2rem; background: rgba(74, 158, 255, 0.05); border-radius: 12px; 
                     border: 2px dashed #2d4a5f; text-align: center;">
             <p style="font-size: 3rem; margin: 0;">🤖</p>
-            <h3 style="color: #4a9eff; margin: 1rem 0 0.5rem 0;">AI Analysis Ready</h3>
+            <h3 style="color: #4a9eff; margin: 1rem 0 0.5rem 0;">Real AI Analysis Ready</h3>
             <p style="color: #7a92a8; font-size: 0.95rem; max-width: 600px; margin: 0 auto;">
                 Select an asset and click "Generate Analysis" to receive comprehensive AI-powered 
-                maintenance intelligence including diagnostics, timelines, financial impact, and actionable recommendations.
+                maintenance intelligence powered by Google Gemini, including diagnostics, timelines, 
+                financial impact, and actionable recommendations.
             </p>
         </div>
         """, unsafe_allow_html=True)
@@ -1185,7 +992,7 @@ elif page == "📄 Reports & Insights":
     
     st.markdown("<br>", unsafe_allow_html=True)
     
-    st.button("📥 Generate Report", disabled=True, use_container_width=False, help="ML engine integration required")
+    st.button("📥 Generate Report", disabled=True, use_container_width=False, help="Feature coming soon")
     
     st.markdown("<br>", unsafe_allow_html=True)
     
@@ -1196,8 +1003,8 @@ elif page == "📄 Reports & Insights":
         value="═══════════════════════════════════════════\n"
               "   MAINTENANCE INTELLIGENCE REPORT\n"
               "═══════════════════════════════════════════\n\n"
-              "Report generation pending ML engine integration.\n\n"
-              "Once connected, this section will display:\n"
+              "Report generation feature coming soon.\n\n"
+              "Once available, this section will display:\n"
               "• Executive summary\n"
               "• Detailed analytics\n"
               "• Actionable insights\n"
