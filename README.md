@@ -63,7 +63,7 @@ We propose a **context‑aware predictive maintenance platform** that:
 5. Engineer additional features:
    - Thermal gap
    - Environmental stress
-   - Mechanical stress (vibration proxy)
+   - Mechanical stress (vibration proximity)
 
 ---
 
