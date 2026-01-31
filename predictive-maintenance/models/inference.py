@@ -4,60 +4,42 @@ import numpy as np
 import os
 
 # ==============================
-# Utility: Normalize to 0–100
-# ==============================
-def normalize_to_0_100(value, lower_bound, upper_bound):
-    """
-    Robust normalization to 0–100 with clipping.
-    """
-    if upper_bound == lower_bound:
-        return 50.0
-
-    norm = (value - lower_bound) / (upper_bound - lower_bound)
-    norm = max(0.0, min(1.0, norm))
-    return round(norm * 100, 2)
-
-# ==============================
-# Load Model Package
+# Load Model Package and Scaler
 # ==============================
 MODEL_PATH = os.path.join(
     os.path.dirname(__file__),
     "predictive_maintenance_model.pkl"
 )
 
+SCALER_PATH = os.path.join(
+    os.path.dirname(__file__),
+    "feature_scaler.pkl"
+)
+
 def load_model():
     return joblib.load(MODEL_PATH)
 
+def load_scaler():
+    return joblib.load(SCALER_PATH)
+
 model_package = load_model()
+scaler = load_scaler()
 
 REQUIRED_FEATURES = model_package["feature_names"]
 TARGETS = model_package["target_names"]
 
 # ==============================
-# Normalization Bounds (Dynamic)
-# ==============================
-# Create bounds dynamically based on actual target names
-BOUNDS = {}
-for target in TARGETS:
-    if "vibration" in target.lower():
-        BOUNDS[target] = (-2000, 2000)
-    elif "thermal" in target.lower():
-        BOUNDS[target] = (-1500, 1500)
-    elif "efficiency" in target.lower():
-        BOUNDS[target] = (-2000, 2000)
-    elif "failure" in target.lower() or "risk" in target.lower():
-        BOUNDS[target] = (-2000, 2000)
-    else:
-        # Default bounds for unknown targets
-        BOUNDS[target] = (-2000, 2000)
-
-# ==============================
-# Main Prediction Function
+# Main Prediction Function (FULLY FIXED)
 # ==============================
 def predict_from_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     """
     Runs ensemble prediction for all rows in dataframe.
     Returns dataframe with 4 prediction columns (0–100 scale).
+    
+    FULLY FIXED: 
+    - Scales input features using saved scaler
+    - No broken normalization
+    - Proper column name mapping for Streamlit compatibility
     """
 
     # Check for missing required features
@@ -73,9 +55,13 @@ def predict_from_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     df = df.replace([np.inf, -np.inf], np.nan)
     df = df.fillna(df.median()).fillna(0)
 
+    # ✅ CRITICAL FIX: Scale features using the saved scaler
+    df_scaled = scaler.transform(df)
+    df_scaled = pd.DataFrame(df_scaled, columns=REQUIRED_FEATURES)
+
     results = {target: [] for target in TARGETS}
 
-    for _, row in df.iterrows():
+    for _, row in df_scaled.iterrows():
         row_df = pd.DataFrame([row])
 
         for target in TARGETS:
@@ -92,28 +78,46 @@ def predict_from_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 
             ensemble_pred = np.dot(weights, preds)
 
-            # Normalize to 0–100
-            low, high = BOUNDS[target]
-            score_0_100 = normalize_to_0_100(ensemble_pred, low, high)
-
+            # ✅ Just clip to 0-100
+            score_0_100 = float(np.clip(ensemble_pred, 0, 100))
+            
             results[target].append(score_0_100)
 
-    return pd.DataFrame(results)
+    results_df = pd.DataFrame(results)
+    
+    # ✅ Rename columns to match Streamlit expectations
+    results_df = results_df.rename(columns={
+        'vibration_health': 'vibration_index',
+        'thermal_health': 'thermal_index',
+        'efficiency_index': 'efficiency_index',
+        'failure_risk': 'failure_risk'
+    })
+    
+    return results_df
 
 # ==============================
 # CLI Test
 # ==============================
 if __name__ == "__main__":
+    # Test with healthy pump (RAW VALUES - will be scaled automatically)
     test_df = pd.DataFrame([{
-        "air_temperature_k": 298.5,
-        "process_temperature_k": 310.2,
-        "rotational_speed_rpm": 1500,
-        "torque_nm": 45.3,
-        "tool_wear_min": 120,
-        "temperature": 25.3,
-        "humidity": 65,
-        "rainfall": 2.5
+        "air_temperature_k": 299.1,
+        "process_temperature_k": 304.5,
+        "rotational_speed_rpm": 2500,
+        "torque_nm": 28.5,
+        "tool_wear_min": 42,
+        "temperature": 25.9,
+        "humidity": 54,
+        "rainfall": 0
     }])
 
-    print("\n🔍 Test Prediction Output:")
-    print(predict_from_dataframe(test_df))
+    print("\n🔍 Test Prediction Output (Healthy Pump - RAW INPUT):")
+    print("Input values (before scaling):")
+    print(test_df.iloc[0])
+    
+    print("\n📊 Predictions:")
+    result = predict_from_dataframe(test_df)
+    print(result)
+    
+    print("\n✅ Expected: High efficiency (>60), Low failure risk (<40)")
+    print("📋 Column names: vibration_index, thermal_index, efficiency_index, failure_risk")
