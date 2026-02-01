@@ -1,130 +1,133 @@
-# 🏭 Predictive Maintenance System (PS ID: 9.4)
+# 🏭 Industrial Predictive Maintenance Intelligence Platform  
+**PS ID: 9.4 – Central India Hackathon (CIH 3.0)**
 
 ## 📌 Overview
-This project implements an **AI‑based Predictive Maintenance System** that predicts machine failures in advance using **machine sensor data** enriched with **environmental (weather) context**.  
-The solution is designed to be **versatile, scalable, and applicable across multiple machine types** in industrial environments.
+This project presents an **AI-powered predictive maintenance system** designed to detect early signs of machine degradation, identify root causes, and recommend actionable maintenance steps.
+
+The system combines:
+- **Custom industrial datasets**
+- **Ensemble machine learning**
+- **AI-driven diagnostics**
+- **Real-time alerting**
+
+to move maintenance from **reactive → predictive → intelligent**.
 
 ---
 
 ## 🎯 Problem Statement (PS ID: 9.4)
-Industries face frequent **unexpected machine failures** leading to downtime, high maintenance costs, reduced efficiency, and safety risks.  
-Traditional maintenance approaches are either **reactive** or **schedule‑based**, which are inefficient and costly.
+Unexpected machine failures in industrial environments lead to:
+- Production downtime
+- High repair costs
+- Safety risks
+- Efficiency loss
 
-The goal is to design a **machine learning–based predictive maintenance system** that:
-- Predicts machine failures before they occur  
-- Identifies the **type of failure**  
-- Considers **environmental conditions**  
-- Supports proactive and data‑driven maintenance decisions  
+Traditional maintenance approaches fail to detect *early degradation patterns*.
 
----
-
-## 💡 Proposed Solution
-We propose a **context‑aware predictive maintenance platform** that:
-- Uses **machine sensor data** to detect early degradation
-- Integrates **weather data** (temperature, humidity, rainfall) as contextual features
-- Predicts:
-  - Machine Failure (Yes / No)
-  - Failure Type (Tool Wear, Heat Dissipation, Power Failure, etc.)
-- Generates actionable insights for maintenance teams
+**Objective:**  
+Build a scalable ML system that predicts machine health, diagnoses failure causes, and assists maintenance teams with timely decisions.
 
 ---
 
-## 📂 Datasets Used
+## 🧩 Dataset Strategy
 
-### 1️⃣ UCI AI4I 2020 Predictive Maintenance Dataset
-- Machine sensor readings:
-  - Air temperature
-  - Process temperature
-  - Rotational speed
-  - Torque
-  - Tool wear
-- Failure labels:
-  - Machine failure (binary)
-  - Failure types:
-    - TWF – Tool Wear Failure
-    - HDF – Heat Dissipation Failure
-    - PWF – Power Failure
-    - OSF – Overstrain Failure
-    - RNF – Random Failure
+### 🔹 Custom Industrial Dataset
+A custom dataset was created by taking reference from:
+- **NASA Turbofan Engine Degradation Dataset**
+- **UCI AI4I 2020 Predictive Maintenance Dataset**
 
-### 2️⃣ Synthetic Industrial Weather Dataset
-- Ambient temperature
-- Humidity
-- Rainfall
-- Used **only as contextual features**, not labels
+The dataset simulates real industrial conditions with features such as:
+- Vibration index  
+- Thermal index  
+- Efficiency metrics  
+- Operational load patterns  
+- Environmental context (simulated)
 
 ---
 
 ## 🔄 Data Processing Pipeline
-1. Load and clean AI4I machine sensor data  
-2. Generate / load synthetic weather data  
-3. Simulate timestamps for AI4I dataset  
-4. Perform **time‑aware feature‑level merge** with weather data  
-5. Engineer additional features:
-   - Thermal gap
-   - Environmental stress
-   - Mechanical stress (vibration proximity)
+1. Data cleaning & normalization  
+2. Feature engineering:
+   - Mechanical stress indicators  
+   - Thermal degradation patterns  
+   - Efficiency decay trends  
+3. Dataset splitting with leakage prevention  
+4. Model-specific preprocessing  
 
 ---
 
-## 🧠 Machine Learning Approach
+## 🧠 Machine Learning Architecture
 
-### Model Design
-- **Stage 1:** Binary Classification  
-  → Predict Machine Failure (Yes / No)
+### Models Implemented
+- **Model 1:** XGBoost (optimized hyperparameters)
+- **Model 2:** Random Forest
+- **Model 3:** Histogram Gradient Boosting
+- **Model 4:** Ridge Regression
 
-- **Stage 2:** Multi‑Class Classification  
-  → Predict Failure Type (TWF, HDF, PWF, OSF, RNF)
+### 🔗 Ensemble Strategy
+A **weighted ensemble** approach combines all models to:
+- Improve prediction stability
+- Reduce variance
+- Increase robustness across machine types
 
-### Models Used
-- Random Forest
-- XGBoost (optional)
+---
 
-### Key ML Considerations
-- Handles **class imbalance** using class weighting
-- Evaluated using **F1‑score and Recall**
-- Avoids data leakage during training
+## 🤖 AI Intelligence Layer
+An AI reasoning layer powered by **Gemini 2.5 Pro** generates:
+- Root cause diagnosis  
+- Maintenance recommendations  
+- Risk classification  
+- Maintenance timelines (Immediate / Short / Long term)
+
+This bridges the gap between **ML predictions and human decision-making**.
+
+---
+
+## 🚨 Smart Notification System
+- Integrated **Twilio** for real-time alerts
+- Sends **SMS & WhatsApp notifications** on critical failures
+- Includes:
+  - Asset ID
+  - Health metrics
+  - AI diagnosis
+  - Immediate action steps
 
 ---
 
 ## 📊 System Outputs
-- Failure probability
-- Failure type prediction
-- Weather‑adjusted risk score
-- Machine health insights
-
----
-
-## 🚀 Key Advantages
-- Early failure prediction → reduced downtime  
-- Lower maintenance and repair costs  
-- Adaptable to **multiple machine types**  
-- Improved explainability using contextual data  
-- Industry‑ready and scalable design  
+- Vibration Index
+- Thermal Index
+- Efficiency Score
+- Asset Risk Level
+- AI-generated maintenance actions & timelines
 
 ---
 
 ## 🛠️ Tech Stack
 - Python
 - Pandas, NumPy
-- Scikit‑learn
-- XGBoost (optional)
-- Jupyter Notebook / Python scripts
+- Scikit-learn
+- XGBoost
+- Streamlit (Dashboard)
+- Gemini 2.5 Pro (AI reasoning)
+- Twilio (Alerts)
 
 ---
 
-## 🏁 Conclusion
-This system shifts industrial maintenance from **reactive** to **predictive**, enabling smarter decision‑making, improved machine health, and cost‑efficient operations.
+## 🚀 Future Enhancements
+- IoT sensor integration (real-time data)
+- Edge deployment for factories
+- Digital twin modeling
+- Remaining Useful Life (RUL) prediction
 
 ---
 
 ## 👥 Team
 - Rohit Rathod  
-- Chengiskhan  
+- Chitransh Damhedhar  
 - Ujwal Prakash Hiwase  
 - Prachit Mankar  
 
 ---
 
 ## 📄 License
-This project is for academic and educational purposes.
+Academic & educational use only.
