@@ -4,13 +4,14 @@
 ## 📌 Overview
 This project presents an **AI-powered predictive maintenance system** designed to detect early signs of machine degradation, identify root causes, and recommend actionable maintenance steps.
 
-The system combines:
-- **Custom industrial datasets**
-- **Ensemble machine learning**
-- **AI-driven diagnostics**
-- **Real-time alerting**
+The platform spans the full industrial maintenance lifecycle:
+- **Physical Edge Sensor Layer:** ESP32-based hardware acquisition for vibration, temperature, current, and RPM
+- **Custom Industrial Datasets:** Modeled from real-world turbofan and manufacturing telemetry
+- **Ensemble Machine Learning:** Robust multi-model prediction of machine degradation
+- **AI-Driven Diagnostics:** Root-cause analysis and actionable repair guidance via LLM reasoning
+- **Real-Time Alerting:** Instant SMS & WhatsApp notifications for operational emergencies
 
-to move maintenance from **reactive → predictive → intelligent**.
+Moving maintenance from **reactive → predictive → intelligent**.
 
 ---
 
@@ -24,7 +25,46 @@ Unexpected machine failures in industrial environments lead to:
 Traditional maintenance approaches fail to detect *early degradation patterns*.
 
 **Objective:**  
-Build a scalable ML system that predicts machine health, diagnoses failure causes, and assists maintenance teams with timely decisions.
+Build an end-to-end scalable predictive maintenance solution that acquires physical machine telemetry, predicts machine health degradation, diagnoses failure causes, and assists plant maintenance engineers with timely decisions.
+
+---
+
+## ⚡ Edge Hardware & Sensor Acquisition Layer
+
+The platform includes a dedicated **ESP32 Arduino firmware module** (`firmware/esp32/`) responsible for acquiring real-time physical telemetry from machinery:
+
+- **MPU6050 (I2C):** Tri-axial acceleration ($X, Y, Z$) and composite vibration magnitude calculation
+- **DS18B20 (1-Wire):** Machinery surface and bearing temperature monitoring
+- **ACS712 (ADC):** Motor current draw and electrical load sensing
+- **Hall-Effect Sensor (Interrupt):** Rotational velocity (RPM) measurement via hardware pulse counting
+
+The edge module outputs formatted diagnostics and standardized JSON telemetry packets over Serial (115200 baud):
+```json
+{"device_id":"MACHINE_01","temperature":42.5,"vibration_x":0.12,"vibration_y":0.18,"vibration_z":1.04,"vibration_magnitude":1.06,"current":1.82,"rpm":1450}
+```
+
+> **Note:** Basic ESP32 sensor acquisition is implemented. Integration with the streaming analytics pipeline (Wi-Fi/MQTT/REST) is scheduled for the next development phase. See [firmware/esp32/README.md](firmware/esp32/README.md) for complete pinout and wiring guides.
+
+---
+
+## 📁 Repository Structure
+
+```text
+.
+├── firmware/
+│   └── esp32/
+│       ├── predictive_maintenance.ino   # ESP32 Arduino sensor acquisition firmware
+│       └── README.md                    # Hardware wiring, pinout & setup guide
+├── predictive-maintenance/
+│   ├── alerts.py                        # Twilio SMS / WhatsApp alerting service
+│   ├── app.py                           # Streamlit analytics & diagnostics dashboard
+│   ├── features.py                      # Feature engineering & transformation utilities
+│   ├── train_model.py                   # Ensemble model training script
+│   ├── data/                            # Processed dataset files
+│   └── models/                          # Serialized ML models & scalers
+├── requirements.txt                     # Python dependencies
+└── README.md
+```
 
 ---
 
@@ -94,30 +134,31 @@ This bridges the gap between **ML predictions and human decision-making**.
 ---
 
 ## 📊 System Outputs
-- Vibration Index
-- Thermal Index
+- Vibration Index & Acceleration Vector
+- Thermal Index / Bearing Temperature
 - Efficiency Score
+- Motor Current & Electrical Load
+- Rotational Speed (RPM)
 - Asset Risk Level
 - AI-generated maintenance actions & timelines
 
 ---
 
 ## 🛠️ Tech Stack
-- Python
-- Pandas, NumPy
-- Scikit-learn
-- XGBoost
-- Streamlit (Dashboard)
-- Gemini 2.5 Pro (AI reasoning)
-- Twilio (Alerts)
+- **Edge / Embedded:** C++, Arduino IDE, ESP32, I2C, 1-Wire, ADC
+- **Core Analytics & ML:** Python, Pandas, NumPy, Scikit-learn, XGBoost
+- **Web Dashboard:** Streamlit
+- **Generative AI Diagnostics:** Gemini 2.5 Pro
+- **Alerting & Communications:** Twilio (SMS & WhatsApp)
 
 ---
 
 ## 🚀 Future Enhancements
-- IoT sensor integration (real-time data)
-- Edge deployment for factories
-- Digital twin modeling
-- Remaining Useful Life (RUL) prediction
+- [x] Dedicated ESP32 physical sensor acquisition firmware module
+- [ ] Wireless telemetry ingestion (ESP32 Wi-Fi / MQTT / HTTP to backend)
+- [ ] Edge-based lightweight anomaly detection (TinyML on ESP32)
+- [ ] Digital twin modeling
+- [ ] Remaining Useful Life (RUL) regression forecasting
 
 ---
 
@@ -131,3 +172,4 @@ This bridges the gap between **ML predictions and human decision-making**.
 
 ## 📄 License
 Academic & educational use only.
+
